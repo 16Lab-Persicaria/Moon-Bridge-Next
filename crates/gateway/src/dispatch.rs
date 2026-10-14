@@ -515,6 +515,13 @@ pub async fn handle_request(
                 .transform_error(&ctx, &text)
                 .await
                 .unwrap_or_else(|_| text.clone());
+            // 上游错误体为空（如空 body 的 502）时 message 是空串，客户端只看到
+            // 「上游错误[502]: 」无从显示；兜底成可读摘要。
+            let msg = if msg.trim().is_empty() {
+                format!("上游返回 HTTP {status}（响应体为空）")
+            } else {
+                msg
+            };
             trace.status = "error".to_string();
             // 完整响应体归位 upstream_response 快照；error 只留简短摘要，
             // 否则上游 4xx/5xx 的 HTML 错误页会整页写进 trace.error。

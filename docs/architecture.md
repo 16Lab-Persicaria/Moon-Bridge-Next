@@ -337,8 +337,10 @@ Client → axum: POST /v1/responses | /v1/messages | /v1/chat/completions
   → [CORE] on_request / inject_tools
   → 选 ProviderAdapter → from_core_request → UpstreamRequest(headers+body)
   → [RAW] on_upstream_request_raw          改上游 method/url/headers/body（全部回读，见下）
-  → reqwest 发送(受 egress proxy)   ←── 端点故障转移循环（逐端点重走上面三步）
+  → reqwest 发送(受 egress proxy；环回目标不走代理，见 §10 代理限制)   ←── 端点故障转移循环（逐端点重走上面三步）
   → 上游非 2xx: [RAW] on_upstream_response_raw（错误路径，msg.error=true，见 §5）
+             → 错误体为空时 transform_error 结果兑底为「上游返回 HTTP {status}（响应体为空）」，
+               避免空 message 让客户端无内容可显示
              → retry = sleep(min(delay_ms, pluginRetryDelayCapMs)) 后重走端点链，
                最多 pluginRetryMax 轮；非流式重试还受 request_timeout_secs
                剩余预算约束（装不下延迟即放弃）；short_circuit / abort 沿用既有语义；
@@ -580,7 +582,9 @@ API），对 Provider 的**每个端点 key** 各调用一次 `MB.query(ctx)` �
   配额配置字段；元数据地址始终禁止。HTTP 不继承系统代理、不跟随重定向，解析并校验
   DNS 校验后固定目标地址，解压后响应上限 1 MiB，单次 HTTP 最长 30s。
 - **代理限制**：显式 `egressProxy` 导致配额 HTTP 明确报不支持代理，不静默直连；
-  网关推理请求的代理支持不受此限制影响。
+  网关推理请求的代理支持不受此限制影响。推理客户端的 egress 代理对**环回地址
+  （`127.0.0.0/8` / `::1` / `localhost`）不生效**（`upstream::build_client` 的
+  `NoProxy`）：代理软件普遍拒绝代理回环流量并回空 502，本地上游应直连。
 - **定时调度**：每代运行实例仅持有一个 `spawn_quota_scheduler`，重启取消旧任务。
   每 30s 扫描 `quota_enabled && quota_plugin_ref <> '' && quota_interval_secs > 0 &&
   已到期` 的 Provider 串行执行；单 Provider 失败/panic 不影响循环。

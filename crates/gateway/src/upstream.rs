@@ -14,8 +14,11 @@ use crate::sse;
 pub fn build_client(config: &GatewayConfig) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(30));
     if let Some(proxy) = &config.egress_proxy {
+        // 环回目标（本地上游，如 127.0.0.1:8317）不走 egress 代理——代理软件
+        // 普遍拒绝代理回环流量并回空 502，直连即可。
         let p = reqwest::Proxy::all(proxy)
-            .map_err(|e| GatewayError::Other(format!("egress 代理配置错误: {e}")))?;
+            .map_err(|e| GatewayError::Other(format!("egress 代理配置错误: {e}")))?
+            .no_proxy(reqwest::NoProxy::from_string("127.0.0.0/8,::1,localhost"));
         builder = builder.proxy(p);
     }
     builder.build().map_err(Into::into)
